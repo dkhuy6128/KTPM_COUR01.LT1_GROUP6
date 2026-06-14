@@ -1,10 +1,13 @@
 <!DOCTYPE html>
 <html lang="vi">
+
+<html lang="vi" xmlns:th="http://www.thymeleaf.org">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Kanban Board</title>
-    <link rel="stylesheet" href="/css/style.css">
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" th:href="@{/css/style.css}">
     <style>
         .kanban-container { display: flex; gap: 15px; margin-top: 20px; align-items: flex-start; }
         .kanban-column { flex: 1; background: #f1f5f9; border-radius: 8px; padding: 12px; min-height: 450px; }
