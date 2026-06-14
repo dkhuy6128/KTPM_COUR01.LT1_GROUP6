@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Đăng Ký</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', sans-serif; background: #4a6cf7; min-height: 100vh; display: flex; justify-content: center; align-items: center; padding: 15px; }
+        .box { background: white; padding: 35px; border-radius: 8px; width: 100%; max-width: 420px; }
+        h1 { text-align: center; margin-bottom: 25px; font-size: 22px; }
+        input { width: 100%; padding: 10px; margin-bottom: 12px; border: 1px solid #ddd; border-radius: 4px; }
+        button { width: 100%; padding: 10px; background: #4a6cf7; color: white; border: none; border-radius: 4px; cursor: pointer; }
+        .error { background: #fee; color: #c00; padding: 10px; border-radius: 4px; margin-bottom: 12px; display: none; }
+        .link { text-align: center; margin-top: 15px; font-size: 14px; }
+        .link a { color: #4a6cf7; }
+    </style>
+</head>
+<body>
+    <div class="box">
+        <h1>Đăng Ký</h1>
+        <div class="error" id="error"></div>
+        <form id="registerForm">
+            <input type="text" id="username" placeholder="Username" required>
+            <input type="text" id="fullName" placeholder="Họ tên" required>
+            <input type="email" id="email" placeholder="Email">
+            <input type="password" id="password" placeholder="Password" required>
+            <input type="password" id="confirmPassword" placeholder="Xác nhận password" required>
+            <button type="submit">Đăng ký</button>
+        </form>
+        <div class="link">Đã có tài khoản? <a href="/login">Đăng nhập</a></div>
+    </div>
+    <script>
+        document.getElementById('registerForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const password = document.getElementById('password').value;
+            const confirmPassword = document.getElementById('confirmPassword').value;
+            if (password !== confirmPassword) {
+                document.getElementById('error').textContent = 'Mật khẩu không khớp';
+                document.getElementById('error').style.display = 'block';
+                return;
+            }
+            const res = await fetch('/api/auth/register', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    username: document.getElementById('username').value,
+                    fullName: document.getElementById('fullName').value,
+                    email: document.getElementById('email').value,
+                    password, confirmPassword
+                })
+            });
+            const data = await res.json();
+            if (data.success) {
+                alert('Đăng ký thành công!');
+                window.location.href = '/login';
+            } else {
+                document.getElementById('error').textContent = data.message;
+                document.getElementById('error').style.display = 'block';
+            }
+        });
+    </script>
+</body>
+</html>

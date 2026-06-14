@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pomodoro Timer</title>
+    <link rel="stylesheet" href="/css/style.css">
+    <style>
+        .pomo-card { background: white; border-radius: 12px; padding: 30px; max-width: 600px; margin: 40px auto; text-align: center; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); }
+        .timer-display { font-size: 90px; font-weight: bold; color: #3b82f6; margin: 20px 0; font-family: monospace; letter-spacing: -2px; }
+        .status-badge { display: inline-block; padding: 6px 16px; border-radius: 20px; font-weight: bold; font-size: 14px; margin-top: 10px; }
+        .status-work { background: #fee2e2; color: #ef4444; }
+        .status-break { background: #dcfce7; color: #22c55e; }
+        .status-idle { background: #f1f5f9; color: #64748b; }
+        .task-select { width: 80%; padding: 10px; border-radius: 6px; border: 1px solid #cbd5e1; font-size: 15px; margin-bottom: 15px; }
+        .btn-group { display: flex; gap: 10px; justify-content: center; margin-top: 20px; }
+
+        .mini-pomo-window {
+            position: fixed; top: 60px; left: 20px; background: rgba(15, 23, 42, 0.95); color: white;
+            padding: 12px 16px; border-radius: 8px; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3);
+            z-index: 9999; font-family: monospace; display: none; border-left: 4px solid #ef4444; min-width: 180px;
+        }
+        .mini-timer { font-size: 22px; font-weight: bold; color: #f43f5e; margin-top: 3px; }
+    </style>
+</head>
+<body>
+
+<div id="miniPomoWindow" class="mini-pomo-window">
+    <div style="font-size: 11px; color: #94a3b8; font-weight: bold;">🎯 TASK HIỆN TẠI</div>
+    <div id="miniTaskTitle" style="font-size: 13px; font-weight: bold; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">Không rõ</div>
+    <div id="miniTimerDisplay" class="mini-timer">30:00</div>
+</div>
+
+<nav class="navbar">
+    <div>
+        <strong>Task Manager</strong>
+        <a href="/dashboard">Dashboard</a>
+        <a href="/kanban">Kanban</a>
+        <a href="/calendar">Calendar</a>
+        <a href="/pomodoro" class="active">Pomodoro</a>
+    </div>
+    <div>
+        <span id="username"></span>
+        <button class="btn btn-gray" onclick="logout()">Logout</button>
+    </div>
+</nav>
+
+<div class="container">
+    <div class="pomo-card">
+        <h2>Pomodoro Timer Pro</h2>
+        
+        <select id="pomoTaskSelect" class="task-select" onchange="saveSelectedTaskState()">
+            <option value="">-- Chọn task sắp đến hạn để tập trung --</option>
+        </select>
+        
+        <p id="targetTaskText" style="font-weight: bold; color: #475569; margin-top: 5px;">Chọn task rồi bấm Bắt đầu</p>
+
+        <div class="timer-display" id="timerDisplay">30:00</div>
+
+        <div>Trạng thái phiên: <span id="pomoStatus" class="status-badge status-idle">Sẵn sàng</span></div>
+
+        <div class="btn-group">
+            <button class="btn btn-green" id="startBtn" onclick="startTimer()">Bắt đầu</button>
+            <button class="btn btn-orange" id="pauseBtn" onclick="pauseTimer()" style="display:none;">Tạm dừng</button>
+            <button class="btn btn-red" onclick="resetTimer()">Reset</button>
+        </div>
+        
+        <div style="margin-top: 15px; font-size: 12px; color: #64748b;">
+            💡 Hệ thống tự động kích hoạt thông báo đẩy trình duyệt và còi báo khi hết giờ.
+        </div>
+    </div>
+</div>
+
+<script src="/js/auth.js"></script>
+<script>
+checkAuth();
+const userId = getUserId();
+document.getElementById('username').textContent = getUsername();
+
+let pomoTasks = [];
+let timerInterval = null;
+
+let isWorkMode = localStorage.getItem('pomo_isWorkMode') !== 'false';
+let isPaused = localStorage.getItem('pomo_isPaused') !== 'false';
+let targetEndTime = parseInt(localStorage.getItem('pomo_targetEndTime')) || 0;
+let savedTimeLeft = parseInt(localStorage.getItem('pomo_savedTimeLeft')) || (30 * 60);
+
+// Xin quyền thông báo đẩy trình duyệt ngay khi load trang
+if (Notification.permission !== "granted" && Notification.permission !== "denied") {
+    Notification.requestPermission();
+}
+
+// HÀM PHÁT ÂM THANH BÁO ĐỘNG SỬ DỤNG CODE THUẦN (WEB AUDIO API)
+function playSystemAlarmSound() {
+    try {
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        const oscillator = audioCtx.createOscillator();
+        const gainNode = audioCtx.createGain();
+        
+        oscillator.type = 'sine';
+        oscillator.frequency.setValueAtTime(880, audioCtx.currentTime); // Tần số nốt cao vang dội
+        gainNode.gain.setValueAtTime(0.5, audioCtx.currentTime); // Âm lượng
+        
+        oscillator.connect(gainNode);
+        gainNode.connect(audioCtx.destination);
+        
+        oscillator.start();
+        // Phát tiếng bíp chuông kéo dài đúng 1.2 giây rồi tắt tự động
+        setTimeout(() => oscillator.stop(), 1200);
+    } catch (e) { console.log("Không thể phát chuông âm thanh."); }
+}
+
+// HÀM PHÁT THÔNG BÁO ĐẨY WEB NOTIFICATION LÊN GÓC MÀN HÌNH
+function sendWebNotification(title, message) {
+    if (Notification.permission === "granted") {
+        new Notification(title, { body: message, icon: '/favicon.ico' });
+    }
+}
+
+async function loadPomoTasks() {
+    try {
+        pomoTasks = JSON.parse(localStorage.getItem('local_tasks_' + userId)) || [];
+        const res = await api('/api/tasks/' + userId);
+        if (res && res.ok) {
+            pomoTasks = await res.json();
+            localStorage.setItem('local_tasks_' + userId, JSON.stringify(pomoTasks));
+        }
+    } catch (e) {}
+    populateTaskSelect();
+    restoreTimerState();
+}
+
+function populateTaskSelect() {
+    const select = document.getElementById('pomoTaskSelect');
+    let activeTasks = pomoTasks.filter(t => t.status !== 'COMPLETED');
+    activeTasks.sort((a, b) => {
+        if (!a.endTime) return 1;
+        if (!b.endTime) return -1;
+        return new Date(a.endTime).getTime() - new Date(b.endTime).getTime();
+    });
+    select.innerHTML = '<option value="">-- Chọn task sắp đến hạn để tập trung --</option>';
+    activeTasks.forEach(t => {
+        let deadlineStr = t.endTime ? ` (Hạn: ${new Date(t.endTime).getDate()}/${new Date(t.endTime).getMonth()+1})` : "";
+        select.innerHTML += `<option value="${t.id}">🎯 ${t.title}${deadlineStr}</option>`;
+    });
+    const savedTaskId = localStorage.getItem('pomo_selectedTaskId');
+    if (savedTaskId) select.value = savedTaskId;
+}
+
+function saveSelectedTaskState() {
+    const select = document.getElementById('pomoTaskSelect');
+    localStorage.setItem('pomo_selectedTaskId', select.value);
+}
+
+function updateUIDisplay(minutes, seconds) {
+    const str = `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+    document.getElementById('timerDisplay').textContent = str;
+    document.getElementById('miniTimerDisplay').textContent = str;
+}
+
+function checkTimerPulse() {
+    if (isPaused) return;
+    const distance = targetEndTime - Date.now();
+    if (distance <= 0) {
+        clearInterval(timerInterval);
+        handlePhaseEnd();
+    } else {
+        const secondsLeft = Math.ceil(distance / 1000);
+        updateUIDisplay(Math.floor(secondsLeft / 60), secondsLeft % 60);
+    }
+}
+
+function startTimer() {
+    const select = document.getElementById('pomoTaskSelect');
+    if (isWorkMode && select.value === "") {
+        alert("Chọn lấy 1 cái task sắp đến hạn để làm việc nhé bro!");
+        return;
+    }
+
+    isPaused = false;
+    localStorage.setItem('pomo_isPaused', 'false');
+    localStorage.setItem('pomo_isRunning', 'true'); // Phát tín hiệu chạy ngầm cho các tab khác
+    
+    targetEndTime = Date.now() + (savedTimeLeft * 1000);
+    localStorage.setItem('pomo_targetEndTime', targetEndTime);
+
+    setUIActiveState();
+    clearInterval(timerInterval);
+    timerInterval = setInterval(checkTimerPulse, 1000);
+}
+
+function setUIActiveState() {
+    const select = document.getElementById('pomoTaskSelect');
+    document.getElementById('startBtn').style.display = 'none';
+    document.getElementById('pauseBtn').style.display = 'inline-block';
+    document.getElementById('miniPomoWindow').style.display = 'block';
+    
+    const selectedText = select.selectedIndex >= 0 ? select.options[select.selectedIndex].text : "Đang tập trung";
+    document.getElementById('miniTaskTitle').textContent = selectedText;
+
+    if (isWorkMode) {
+        document.getElementById('targetTaskText').textContent = `🔥 Đang làm: ${selectedText}`;
+        document.getElementById('pomoStatus').className = "status-badge status-work";
+        document.getElementById('pomoStatus').textContent = "Đang làm việc (30p)";
+        document.getElementById('timerDisplay').style.color = "#ef4444";
+    } else {
+        document.getElementById('targetTaskText').textContent = "Thư giãn đầu óc tí đi bro...";
+        document.getElementById('pomoStatus').className = "status-badge status-break";
+        document.getElementById('pomoStatus').textContent = "Đang nghỉ giải lao (5p)";
+        document.getElementById('timerDisplay').style.color = "#22c55e";
+    }
+}
+
+function pauseTimer() {
+    isPaused = true;
+    localStorage.setItem('pomo_isPaused', 'true');
+    localStorage.setItem('pomo_isRunning', 'false');
+    clearInterval(timerInterval);
+
+    const distance = targetEndTime - Date.now();
+    savedTimeLeft = distance > 0 ? Math.ceil(distance / 1000) : (isWorkMode ? 30*60 : 5*60);
+    localStorage.setItem('pomo_savedTimeLeft', savedTimeLeft);
+
+    document.getElementById('startBtn').style.display = 'inline-block';
+    document.getElementById('pauseBtn').style.display = 'none';
+    document.getElementById('pomoStatus').className = "status-badge status-idle";
+    document.getElementById('pomoStatus').textContent = "Đang tạm dừng";
+}
+
+function resetTimer() {
+    isPaused = true;
+    isWorkMode = true;
+    savedTimeLeft = 30 * 60;
+    
+    localStorage.setItem('pomo_isPaused', 'true');
+    localStorage.setItem('pomo_isRunning', 'false');
+    localStorage.setItem('pomo_isWorkMode', 'true');
+    localStorage.setItem('pomo_savedTimeLeft', savedTimeLeft);
+    localStorage.removeItem('pomo_targetEndTime');
+
+    clearInterval(timerInterval);
+    updateUIDisplay(30, 0);
+    
+    document.getElementById('startBtn').style.display = 'inline-block';
+    document.getElementById('pauseBtn').style.display = 'none';
+    document.getElementById('miniPomoWindow').style.display = 'none';
+    document.getElementById('pomoStatus').className = "status-badge status-idle";
+    document.getElementById('pomoStatus').textContent = "Sẵn sàng";
+    document.getElementById('timerDisplay').style.color = "#3b82f6";
+}
+
+function restoreTimerState() {
+    if (!isPaused && targetEndTime > 0) {
+        const distance = targetEndTime - Date.now();
+        if (distance > 0) {
+            savedTimeLeft = Math.ceil(distance / 1000);
+            setUIActiveState();
+            timerInterval = setInterval(checkTimerPulse, 1000);
+            checkTimerPulse();
+            return;
+        } else {
+            handlePhaseEnd();
+            return;
+        }
+    }
+    updateUIDisplay(Math.floor(savedTimeLeft / 60), savedTimeLeft % 60);
+}
+
+function handlePhaseEnd() {
+    playSystemAlarmSound(); // Kích hoạt còi báo hiệu bằng tần số sóng âm chuyên sâu
+
+    if (isWorkMode) {
+        sendWebNotification("⏱️ Hết 30 phút tập trung!", "Chúc mừng bro đã hoàn thành xuất sắc! Đến giờ nghỉ ngơi 5 phút rồi.");
+        try { api('/api/pomodoro/session/' + userId, { method: 'POST' }); } catch(e) {}
+        isWorkMode = false;
+        savedTimeLeft = 5 * 60;
+    } else {
+        sendWebNotification("🔥 Hết giờ giải lao!", "Quay lại bàn làm việc chiến đấu tiếp thôi bro ơi.");
+        isWorkMode = true;
+        savedTimeLeft = 30 * 60;
+    }
+    
+    localStorage.setItem('pomo_isWorkMode', isWorkMode);
+    localStorage.setItem('pomo_savedTimeLeft', savedTimeLeft);
+    isPaused = false;
+    localStorage.setItem('pomo_isPaused', 'false');
+    localStorage.setItem('pomo_isRunning', 'true');
+    
+    targetEndTime = Date.now() + (savedTimeLeft * 1000);
+    localStorage.setItem('pomo_targetEndTime', targetEndTime);
+    
+    setUIActiveState();
+    timerInterval = setInterval(checkTimerPulse, 1000);
+}
+
+loadPomoTasks();
+</script>
+</body>
+</html>

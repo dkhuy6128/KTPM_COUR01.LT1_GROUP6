@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kanban Board</title>
+    <link rel="stylesheet" href="/css/style.css">
+    <style>
+        .kanban-container { display: flex; gap: 15px; margin-top: 20px; align-items: flex-start; }
+        .kanban-column { flex: 1; background: #f1f5f9; border-radius: 8px; padding: 12px; min-height: 450px; }
+        .column-header { font-weight: bold; font-size: 16px; margin-bottom: 12px; padding-bottom: 6px; border-bottom: 2px solid #cbd5e1; color: #1e293b; }
+        .kanban-card { background: white; padding: 12px; border-radius: 6px; margin-bottom: 10px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); cursor: grab; transition: transform 0.1s; }
+        .kanban-card:active { cursor: grabbing; transform: scale(1.02); }
+        .card-prio { font-size: 11px; font-weight: bold; padding: 2px 6px; border-radius: 4px; display: inline-block; margin-top: 5px; }
+        .status-low { background: #dcfce7; color: #15803d; }
+        .status-medium { background: #dbeafe; color: #1d4ed8; }
+        .status-high { background: #fef3c7; color: #b45309; }
+        .status-urgent { background: #fee2e2; color: #b91c1c; }
+    </style>
+</head>
+<body>
+    <div class="app-container">
+        <div class="sidebar">
+            <div class="logo">📋 ScheduleApp</div>
+            <div class="user-info">Xin chào, <span id="username">...</span></div>
+            <ul class="menu">
+                <li><a href="/dashboard">📊 Dashboard</a></li>
+                <li><a href="/kanban" class="active">📋 Kanban Board</a></li>
+                <li><a href="/calendar">📅 Calendar Pro</a></li>
+                <li><a href="/pomodoro">⏱️ Pomodoro Timer</a></li>
+            </ul>
+            <button class="btn-logout" onclick="logout()">Đăng xuất</button>
+        </div>
+
+        <div class="main-content">
+            <h1 style="color: #1e293b; margin: 0 0 5px 0;">Kanban Board</h1>
+            <p style="color: #64748b; margin: 0 0 20px 0; font-size: 14px;">Kéo thả công việc giữa các trạng thái để cập nhật tiến độ tức thì.</p>
+            
+            <div class="kanban-container">
+                <div class="kanban-column" data-status="TODO">
+                    <div class="column-header" style="border-bottom-color: #3b82f6;">📌 Cần làm (TODO)</div>
+                    <div id="col-todo" style="min-height: 400px;"></div>
+                </div>
+
+                <div class="kanban-column" data-status="IN_PROGRESS">
+                    <div class="column-header" style="border-bottom-color: #f59e0b;">⚡ Đang thực hiện</div>
+                    <div id="col-inprogress" style="min-height: 400px;"></div>
+                </div>
+
+                <div class="kanban-column" data-status="COMPLETED">
+                    <div class="column-header" style="border-bottom-color: #10b981;">🎉 Đã hoàn thành</div>
+                    <div id="col-completed" style="min-height: 400px;"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="miniPomoWindowGlobal" style="position:fixed; bottom:20px; right:20px; background:white; padding:12px 20px; border-radius:10px; box-shadow:0 10px 15px -3px rgba(0,0,0,0.1); display:none; border-left:5px solid #ef4444; z-index:9999;">
+        <div style="font-size:11px; text-transform:uppercase; letter-spacing:1px; color:#64748b; font-weight:bold;" id="miniGlobalTaskTitle">Working</div>
+        <div style="font-size:24px; font-weight:bold; color:#1e293b; font-family:monospace;" id="miniGlobalTimerDisplay">00:00</div>
+    </div>
+
+    <script src="/js/auth.js"></script>
+    <script>
+        checkAuth();
+        const userId = getUserId();
+        document.getElementById('username').textContent = getUsername();
+
+        let allTasksCache = [];
+        let draggedTaskId = null;
+
+        async function loadTasks() {
+            allTasksCache = JSON.parse(localStorage.getItem('local_tasks_' + userId)) || [];
+            renderKanbanColumns();
+
+            if (!userId) return;
+            try {
+                // Thay fetch bằng hàm api() trung gian
+                const res = await api('/api/tasks/' + userId);
+                if (res && res.ok) {
+                    allTasksCache = await res.json();
+                    localStorage.setItem('local_tasks_' + userId, JSON.stringify(allTasksCache));
+                    renderKanbanColumns();
+                }
+            } catch (e) {
+                console.error("Lỗi đồng bộ danh sách lên Kanban:", e);
+            }
+        }
+
+        function renderKanbanColumns() {
+            const columns = {
+                'TODO': document.getElementById('col-todo'),
+                'IN_PROGRESS': document.getElementById('col-inprogress'),
+                'COMPLETED': document.getElementById('col-completed')
+            };
+
+            Object.values(columns).forEach(c => { if(c) c.innerHTML = ''; });
+
+            allTasksCache.forEach(t => {
+                const col = columns[t.status || 'TODO'];
+                if (!col) return;
+
+                const card = document.createElement('div');
+                card.className = 'kanban-card';
+                card.draggable = true;
+                card.innerHTML = `
+                    <div style="font-weight:bold; color:#1e293b;">${t.title}</div>
+                    <div style="font-size:12px; color:#64748b; margin-top:4px;">${t.description || ''}</div>
+                    <span class="card-prio status-${(t.priority || 'MEDIUM').toLowerCase()}">${t.priority}</span>
+                `;
+
+                card.addEventListener('dragstart', () => { draggedTaskId = t.id; });
+                col.appendChild(card);
+            });
+        }
+
+        document.querySelectorAll('.kanban-column').forEach(col => {
+            col.addEventListener('dragover', (e) => { e.preventDefault(); });
+            col.addEventListener('drop', async () => {
+                if (!draggedTaskId) return;
+                const targetStatus = col.getAttribute('data-status');
+                
+                allTasksCache = allTasksCache.map(t => t.id == draggedTaskId ? { ...t, status: targetStatus } : t);
+                localStorage.setItem('local_tasks_' + userId, JSON.stringify(allTasksCache));
+                renderKanbanColumns();
+
+                try {
+                    await api(`/api/tasks/${draggedTaskId}/status`, {
+                        method: 'PATCH',
+                        body: JSON.stringify({ status: targetStatus })
+                    });
+                } catch (e) {
+                    console.error("Lỗi update status cột qua API:", e);
+                }
+                draggedTaskId = null;
+            });
+        });
+
+        // Global Timer
+        setInterval(() => {
+            const isRunning = localStorage.getItem('pomo_isRunning') === 'true';
+            const isPaused = localStorage.getItem('pomo_isPaused') === 'true';
+            const targetEndTime = parseInt(localStorage.getItem('pomo_targetEndTime')) || 0;
+            const isWorkMode = localStorage.getItem('pomo_isWorkMode') !== 'false';
+            const savedTimeLeft = parseInt(localStorage.getItem('pomo_savedTimeLeft')) || 0;
+            const miniWin = document.getElementById('miniPomoWindowGlobal');
+            
+            if (!isRunning || (isPaused && savedTimeLeft <= 0)) {
+                if (miniWin) miniWin.style.display = 'none';
+                return;
+            }
+            if (miniWin) miniWin.style.display = 'block';
+            miniWin.style.borderLeftColor = isWorkMode ? "#ef4444" : "#22c55e";
+
+            const allTasks = JSON.parse(localStorage.getItem('local_tasks_' + userId)) || [];
+            const savedTaskId = localStorage.getItem('pomo_selectedTaskId');
+            const currentTask = allTasks.find(t => t.id == savedTaskId);
+            if (document.getElementById('miniGlobalTaskTitle')) {
+                document.getElementById('miniGlobalTaskTitle').textContent = isWorkMode ? (currentTask ? currentTask.title : "Working") : "Break Session";
+            }
+
+            let secondsLeft = (!isPaused && targetEndTime > 0) ? Math.ceil((targetEndTime - Date.now()) / 1000) : savedTimeLeft;
+            if (secondsLeft < 0) secondsLeft = 0;
+            const mins = Math.floor(secondsLeft / 60);
+            const secs = secondsLeft % 60;
+            
+            if (document.getElementById('miniGlobalTimerDisplay')) {
+                document.getElementById('miniGlobalTimerDisplay').textContent = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+            }
+        }, 1000);
+
+        loadTasks();
+    </script>
+</body>
+</html>

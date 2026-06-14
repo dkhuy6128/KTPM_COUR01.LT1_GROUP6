@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Calendar Pro</title>
+    <link rel="stylesheet" href="/css/style.css">
+    <style>
+        .calendar-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+        .calendar-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 8px; background: #f1f5f9; padding: 10px; border-radius: 8px; }
+        .weekday-label { text-align: center; font-weight: bold; padding: 10px 0; color: #475569; }
+        .calendar-day { background: #ffffff; border-radius: 6px; min-height: 100px; padding: 8px; display: flex; flex-direction: column; justify-content: space-between; border: 1px solid #e2e8f0; transition: all 0.2s; cursor: pointer; }
+        .calendar-day:hover { transform: translateY(-2px); box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); }
+        .has-task { background: #f3e8ff !important; border-color: #c084fc; }
+        .today { border: 3px solid #0f172a !important; }
+        .modal-mask { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.4); display: none; justify-content: center; align-items: center; z-index: 999; }
+        .modal-mask.show { display: flex; }
+        .modal-box { background: white; padding: 25px; border-radius: 12px; width: 100%; max-width: 500px; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.1); }
+    </style>
+</head>
+<body>
+    <div class="app-container">
+        <div class="sidebar">
+            <div class="logo">📅 ScheduleApp</div>
+            <div class="user-info">Xin chào, <span id="username">...</span></div>
+            <ul class="menu">
+                <li><a href="/dashboard">📊 Dashboard</a></li>
+                <li><a href="/kanban">📋 Kanban Board</a></li>
+                <li><a href="/calendar" class="active">📅 Calendar Pro</a></li>
+                <li><a href="/pomodoro">⏱️ Pomodoro Timer</a></li>
+            </ul>
+            <button class="btn-logout" onclick="logout()">Đăng xuất</button>
+        </div>
+
+        <div class="main-content">
+            <div class="calendar-header">
+                <h1 id="monthYearLabel" style="margin:0; color:#1e293b;">Tháng 00 Năm 0000</h1>
+                <div>
+                    <button class="btn btn-gray" onclick="changeMonth(-1)">◀ Trước</button>
+                    <button class="btn btn-primary" onclick="changeMonth(1)">Sau ▶</button>
+                </div>
+            </div>
+
+            <div class="calendar-grid" id="calendarGrid">
+                <div class="weekday-label">T2</div>
+                <div class="weekday-label">T3</div>
+                <div class="weekday-label">T4</div>
+                <div class="weekday-label">T5</div>
+                <div class="weekday-label">T6</div>
+                <div class="weekday-label">T7</div>
+                <div class="weekday-label">CN</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal-mask" id="dayModal">
+        <div class="modal-box">
+            <h3 id="modalDateTitle" style="margin-top:0; color:#1e293b;">Lịch trình ngày</h3>
+            <div id="modalTaskList" style="max-height: 300px; overflow-y: auto; margin: 15px 0;"></div>
+            <div style="text-align: right;">
+                <button class="btn btn-gray" onclick="closeDayModal()">Đóng</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="miniPomoWindowGlobal" style="position:fixed; bottom:20px; right:20px; background:white; padding:12px 20px; border-radius:10px; box-shadow:0 10px 15px -3px rgba(0,0,0,0.1); display:none; border-left:5px solid #ef4444; z-index:9999;">
+        <div style="font-size:11px; text-transform:uppercase; letter-spacing:1px; color:#64748b; font-weight:bold;" id="miniGlobalTaskTitle">Đang tập trung</div>
+        <div style="font-size:24px; font-weight:bold; color:#1e293b; font-family:monospace;" id="miniGlobalTimerDisplay">00:00</div>
+    </div>
+
+    <script src="/js/auth.js"></script>
+    <script>
+        checkAuth();
+        const userId = getUserId();
+        document.getElementById('username').textContent = getUsername();
+
+        let allTasksCache = [];
+        let currentYear = new Date().getFullYear();
+        let currentMonth = new Date().getMonth();
+
+        const months = [
+            "Tháng 1", "Tháng 2", "Tháng 3", "Tháng 4", "Tháng 5", "Tháng 6",
+            "Tháng 7", "Tháng 8", "Tháng 9", "Tháng 10", "Tháng 11", "Tháng 12"
+        ];
+
+        async function loadTasks() {
+            allTasksCache = JSON.parse(localStorage.getItem('local_tasks_' + userId)) || [];
+            renderCalendar();
+
+            if (!userId) return;
+            try {
+                // Sử dụng hàm api() trung gian để đính Token tự động
+                const res = await api('/api/tasks/' + userId);
+                if (res && res.ok) {
+                    allTasksCache = await res.json();
+                    localStorage.setItem('local_tasks_' + userId, JSON.stringify(allTasksCache));
+                    renderCalendar();
+                }
+            } catch (e) {
+                console.error("Lỗi tải danh sách task về Calendar:", e);
+            }
+        }
+
+        function renderCalendar() {
+            const monthYearLabel = document.getElementById('monthYearLabel');
+            if(monthYearLabel) monthYearLabel.textContent = `${months[currentMonth]} ${currentYear}`;
+            
+            const grid = document.getElementById('calendarGrid');
+            if(!grid) return;
+            
+            const labels = grid.querySelectorAll('.weekday-label');
+            grid.innerHTML = '';
+            labels.forEach(l => grid.appendChild(l));
+
+            const firstDay = new Date(currentYear, currentMonth, 1).getDay();
+            const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
+
+            const startOffset = firstDay === 0 ? 6 : firstDay - 1; 
+            for (let i = 0; i < startOffset; i++) {
+                const emptyCell = document.createElement('div');
+                emptyCell.className = 'calendar-day';
+                emptyCell.style.background = '#f8fafc';
+                emptyCell.style.cursor = 'default';
+                grid.appendChild(emptyCell);
+            }
+
+            for (let day = 1; day <= daysInMonth; day++) {
+                const cell = document.createElement('div');
+                cell.className = 'calendar-day';
+                
+                const dateStr = `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                
+                const today = new Date();
+                if (day === today.getDate() && currentMonth === today.getMonth() && currentYear === today.getFullYear()) {
+                    cell.classList.add('today');
+                }
+
+                const dayTasks = allTasksCache.filter(t => t.endTime && t.endTime.startsWith(dateStr));
+                if (dayTasks.length > 0) {
+                    cell.classList.add('has-task');
+                }
+
+                cell.innerHTML = `
+                    <div style="font-weight:bold; color:#1e293b;">${day}</div>
+                    <div style="flex:1; overflow-y:auto; margin-top:5px; font-size:11px;">
+                        ${dayTasks.map(t => `<div style="background:#c084fc; color:white; padding:2px 4px; border-radius:3px; margin-bottom:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${t.title}</div>`).join('')}
+                    </div>
+                `;
+                
+                cell.onclick = () => openDayModal(dateStr, dayTasks);
+                grid.appendChild(cell);
+            }
+        }
+
+        function changeMonth(dir) {
+            currentMonth += dir;
+            if (currentMonth < 0) { currentMonth = 11; currentYear--; }
+            else if (currentMonth > 11) { currentMonth = 0; currentYear++; }
+            renderCalendar();
+        }
+
+        function openDayModal(date, tasks) {
+            const modal = document.getElementById('dayModal');
+            if(!modal) return;
+            modal.classList.add('show');
+            document.getElementById('modalDateTitle').textContent = "Lịch trình ngày: " + date;
+            
+            const list = document.getElementById('modalTaskList');
+            if (tasks.length === 0) {
+                list.innerHTML = '<p style="color:#64748b;">Trống lịch, thư giãn thôi bro!</p>';
+            } else {
+                list.innerHTML = tasks.map(t => `
+                    <div style="padding:10px; background:#f1f5f9; border-radius:6px; margin-bottom:8px;">
+                        <b style="color:#7c3aed;">${t.title}</b> <span class="badge badge-todo" style="background:#cbd5e1; color:#334155;">${t.priority}</span>
+                        <p style="margin:4px 0 0 0; font-size:13px; color:#475569;">${t.description || 'Không có mô tả'}</p>
+                    </div>
+                `).join('');
+            }
+        }
+
+        function closeDayModal() {
+            const modal = document.getElementById('dayModal');
+            if(modal) modal.classList.remove('show');
+        }
+
+        // Global Pomo Sync
+        setInterval(() => {
+            const isRunning = localStorage.getItem('pomo_isRunning') === 'true';
+            const isPaused = localStorage.getItem('pomo_isPaused') === 'true';
+            const targetEndTime = parseInt(localStorage.getItem('pomo_targetEndTime')) || 0;
+            const isWorkMode = localStorage.getItem('pomo_isWorkMode') !== 'false';
+            const savedTimeLeft = parseInt(localStorage.getItem('pomo_savedTimeLeft')) || 0;
+            const miniWin = document.getElementById('miniPomoWindowGlobal');
+            
+            if (!isRunning || (isPaused && savedTimeLeft <= 0)) {
+                if (miniWin) miniWin.style.display = 'none';
+                return;
+            }
+            if (miniWin) miniWin.style.display = 'block';
+            miniWin.style.borderLeftColor = isWorkMode ? "#ef4444" : "#22c55e";
+
+            const allTasks = JSON.parse(localStorage.getItem('local_tasks_' + userId)) || [];
+            const savedTaskId = localStorage.getItem('pomo_selectedTaskId');
+            const currentTask = allTasks.find(t => t.id == savedTaskId);
+            if (document.getElementById('miniGlobalTaskTitle')) {
+                document.getElementById('miniGlobalTaskTitle').textContent = isWorkMode ? (currentTask ? currentTask.title : "Đang làm việc") : "Giải lao 5 phút";
+            }
+
+            let secondsLeft = (!isPaused && targetEndTime > 0) ? Math.ceil((targetEndTime - Date.now()) / 1000) : savedTimeLeft;
+            if (secondsLeft < 0) secondsLeft = 0;
+            const mins = Math.floor(secondsLeft / 60);
+            const secs = secondsLeft % 60;
+            
+            if (document.getElementById('miniGlobalTimerDisplay')) {
+                document.getElementById('miniGlobalTimerDisplay').textContent = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+            }
+        }, 1000);
+
+        loadTasks();
+    </script>
+</body>
+</html>
